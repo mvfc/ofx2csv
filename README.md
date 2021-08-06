@@ -8,4 +8,6 @@ Python script that converts .ofx and .qfx files to .csv
 2. Put the ofx files and the ofx2csv.py file inside the same folder 
 3. Do 
 
+```python
 python ofx2csv.py
+´´´
