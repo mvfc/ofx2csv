@@ -10,4 +10,3 @@ Python script that converts .ofx and .qfx files to .csv
 
 ```python
 python ofx2csv.py
-´´´
