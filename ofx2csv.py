@@ -157,7 +157,7 @@ def save_files(table, outputtype, out_file):
       for line in table: writer.writerow(line)
 
   elif outputtype == 'json':
-    print("{} --> {}".format(qfx_file, outputtype));
+    print("  Save to {}...".format(out_file))
     with out_file.open('w') as f: json.dump(table, f)
 
   else:
@@ -167,18 +167,19 @@ def save_files(table, outputtype, out_file):
 def main():
   argparser = argparse.ArgumentParser()
   argparser.add_argument("-o", "--outputtype", help = "csv or json", default="csv")
-  argparser.add_argument("-i", "--input", nargs='+', help = "input file(s)", default="*.qfx")
+  argparser.add_argument("-i", "--input", nargs='+', help = "input file(s)", default=["*.qfx"])
   args = argparser.parse_args()
 
   outputtype = args.outputtype
-  files = glob(args.input)
-  for qfx_file in files:
-    print("Reading {}...".format(qfx_file))
-    qfx = OfxParser.parse(open(qfx_file, encoding="latin-1"))
-    statement = get_statement_from_qfx(qfx)
-    save_files(statement, outputtype, Path(qfx_file).with_suffix('.' + outputtype))
-
-    positions = get_positions_from_qfx(qfx)
-    save_files(positions, outputtype, Path(qfx_file).with_suffix('.positions.' + outputtype))
+  for input in args.input:
+    files = glob(input)
+    for qfx_file in files:
+      print("Reading {}...".format(qfx_file))
+      qfx = OfxParser.parse(open(qfx_file, encoding="latin-1"))
+      statement = get_statement_from_qfx(qfx)
+      save_files(statement, outputtype, Path(qfx_file).with_suffix('.' + outputtype))
+  
+      positions = get_positions_from_qfx(qfx)
+      save_files(positions, outputtype, Path(qfx_file).with_suffix('.positions.' + outputtype))
 
 main()
