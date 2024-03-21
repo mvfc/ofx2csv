@@ -1,93 +1,184 @@
+#!/usr/bin/env` python3
+#
+# Convert Quicken QFX/OFX file into CSV
+#
+# Origin code from whistler/ofx2csv.py
+# https://gist.github.com/whistler/e7c21c70d1cbb9c4b15d
+#
+# NKN: Modified for more generically convert all data in transactions, and
+# positions into two CSV files.
+
+from datetime import datetime
+from pathlib import Path
+from decimal import Decimal
 from csv import DictWriter
 from glob import glob
 from ofxparse import OfxParser
+
 import json
-import urllib.request
-import datetime
 import argparse
-
-argparser = argparse.ArgumentParser()
-argparser.add_argument("-o", "--outputtype", help = "singlecsv, json, or manycsv", default="singlecsv")
-args = argparser.parse_args()
+import pprint
 
 
-DATE_FORMAT = "%d/%m/%Y"
-jsonBody = {}
-outputtype = args.outputtype
-jsonBody["data"] = []
-allStatements = []
+def myDir(obj):
+  items = []
+  for key in dir(obj):
+    if not key.startswith('__'):
+      items.append(key)
+  return items
 
 
-def write_csv(statement, out_file):
-    print("Writing: " + out_file)
-    fields = ['Date', 'Description (payee)', 'Transaction Type (type)', 'UID', 'Amount',
-              'sic', 'mcc', 'Notes (memo)', 'Debit', 'Credit', 'Balance', 'FID', 'Organization']
-    with open(out_file, 'w', newline='') as f:
-        writer = DictWriter(f, fieldnames=fields)
-        writer.writeheader()
-        for line in statement:
-            writer.writerow(line)
+def showStructure(obj, depth : int =5):
+  if depth==0: return obj
+  if isinstance(obj, str): return obj
+  if isinstance(obj, int): return obj
+  if isinstance(obj, Decimal): return float(obj)
+
+  if isinstance(obj, list): 
+    items = []
+    for item in list(obj):
+      items.append(showStructure(item, depth-1))
+    return items
+
+  if isinstance(obj, dict): 
+    items = {}
+    for key in dict(obj):
+      items[key] = showStructure(obj[key], depth-1)
+    return items
+
+  items = {}
+  for key in dir(obj):
+    if not key.startswith('__'):
+      items[key] = showStructure(getattr(obj, key), depth-1)
+  return items
 
 
-def get_statement_from_qfx(qfx):
-    #print(qfx.account.account_id)
-    #print(qfx.account.institution.organization)
-    #print(qfx.account.institution.fid)
-    balance = qfx.account.statement.balance
+def get_statement_from_qfx(qfx : OfxParser):
+    #DBG print("qfx                               :{}".format(myDir(qfx                               )))
+    #DBG print("qfx.account                       :{}".format(myDir(qfx.account                       )))
+    #DBG print("qfx.account.statement             :{}".format(myDir(qfx.account.statement             )))
+    #DBG print("qfx.account.statement.transactions:{}".format(myDir(qfx.account.statement.transactions)))
+
+    #DBG print("accounts:")
+    #DBG pprint.pprint(showStructure(qfx.accounts, 2))
+
+    #DBG print("statement:")
+    #DBG pprint.pprint(showStructure(qfx.accounts[0].statement, 1))
+
+    #DBG print("transactions:")
+    #DBG pprint.pprint(showStructure(qfx.accounts[0].statement.transactions, 2))
+
+    #DBG print("positions:")
+    #DBG pprint.pprint(showStructure(qfx.accounts[0].statement.positions, 2))
+
+    #DBG print("security_list:")
+    #DBG pprint.pprint(showStructure(qfx.security_list))
+
+    # Read all security names
+    secId2Name = {}
+    for security in qfx.security_list:
+      secId2Name[security.uniqueid] = security.name
+
+    # Convert all accounts transactions into a table/list of activity
     statement = []
-    credit_transactions = ['credit', 'dep', 'int', 'directdep']
-    debit_transactions = ['debit', 'atm', 'pos',
-                          'xfer', 'check', 'fee', 'payment']
-    other_transactions = ['other']
-    for transaction in qfx.account.statement.transactions:
-        #print(transaction.type)
-        credit = ""
-        debit = ""
-        balance = balance + transaction.amount
-        if transaction.type in credit_transactions:
-            credit = transaction.amount
-        elif transaction.type in debit_transactions:
-            debit = -transaction.amount
-        elif transaction.type in other_transactions:
-            if transaction.amount < 0:
-                debit = -transaction.amount
-            else:
-                credit = transaction.amount
-        else:
-            raise ValueError("Unknown transaction type:" + transaction.type)
+    for account in qfx.accounts:
+      for transaction in account.statement.transactions:
+        line = {}
 
-        line = {
-            'Date': transaction.date.strftime(DATE_FORMAT),
-            'Description (payee)': transaction.payee,
-            'Transaction Type (type)': transaction.type,
-            'Notes (memo)': transaction.memo,
-            'UID': transaction.id,
-            'Amount': str(transaction.amount),
-            'sic': transaction.sic,
-            'mcc': transaction.mcc,
-            'Debit': str(debit),
-            'Credit': str(credit),
-            'Balance': str(balance),
-            'FID': qfx.account.institution.fid,
-            'Organization': qfx.account.institution.organization}
+        for field in dir(account):
+          if not field.startswith('__') and field!=":":
+            val = getattr(account, field)
+            if isinstance(val, str): line[field] = val
+            if isinstance(val, Decimal): line[field] = float(val)
+            if isinstance(val, datetime): line[field] = val.strftime('%m/%d/%Y')
+
+        for field in dir(transaction):
+          if not field.startswith('__'):
+            val = getattr(transaction, field)
+            if field=="security": val = secId2Name[val]
+            if isinstance(val, str): line[field] = val
+            if isinstance(val, Decimal): line[field] = float(val)
+            if isinstance(val, datetime): line[field] = val.strftime('%m/%d/%Y')
+
+        #if not statement: print("{}".format(line.keys()))
+        #print("{}".format(line.values()))
         statement.append(line)
-        jsonBody["data"].append(line)
     return statement
 
 
-files = glob(r"*.ofx")
-for qfx_file in files:
+def get_positions_from_qfx(qfx : OfxParser):
+    #DBG print("positions:")
+    #DBG pprint.pprint(showStructure(qfx.accounts[0].statement.positions, 2))
+
+    #DBG print("security_list:")
+    #DBG pprint.pprint(showStructure(qfx.security_list))
+
+    # Read all security names
+    secId2Name = {}
+    for security in qfx.security_list:
+      secId2Name[security.uniqueid] = security.name
+
+    # Convert all accounts positions into a table/list of activity
+    positions = []
+    for account in qfx.accounts:
+      for position in account.statement.positions:
+        line = {}
+
+        for field in dir(account):
+          if not field.startswith('__') and field!=":":
+            val = getattr(account, field)
+            if isinstance(val, str): line[field] = val
+            if isinstance(val, Decimal): line[field] = float(val)
+            if isinstance(val, datetime): line[field] = val.strftime('%m/%d/%Y')
+
+        for field in dir(position):
+          if not field.startswith('__'):
+            val = getattr(position, field)
+            if field=="security": val = secId2Name[val]
+            if isinstance(val, str): line[field] = val
+            if isinstance(val, Decimal): line[field] = float(val)
+            if isinstance(val, datetime): line[field] = val.strftime('%m/%d/%Y')
+
+        #if not positions: print("{}".format(line.keys()))
+        #print("{}".format(line.values()))
+        positions.append(line)
+    return positions
+
+
+def save_files(table, outputtype, out_file):
+  if outputtype == 'csv':
+    print("  Save to {}...".format(out_file))
+    with out_file.open('w', newline='') as f:
+      writer = DictWriter(f
+      , fieldnames=table[0].keys()
+      , extrasaction='ignore')
+
+      writer.writeheader()
+      for line in table: writer.writerow(line)
+
+  elif outputtype == 'json':
+    print("{} --> {}".format(qfx_file, outputtype));
+    with out_file.open('w') as f: json.dump(table, f)
+
+  else:
+    print('{} type unsupported'.format(outputtype))
+
+
+def main():
+  argparser = argparse.ArgumentParser()
+  argparser.add_argument("-o", "--outputtype", help = "csv or json", default="csv")
+  argparser.add_argument("-i", "--input", nargs='+', help = "input file(s)", default="*.qfx")
+  args = argparser.parse_args()
+
+  outputtype = args.outputtype
+  files = glob(args.input)
+  for qfx_file in files:
+    print("Reading {}...".format(qfx_file))
     qfx = OfxParser.parse(open(qfx_file, encoding="latin-1"))
     statement = get_statement_from_qfx(qfx)
-    allStatements = allStatements + statement
-    #print(statement)
+    save_files(statement, outputtype, Path(qfx_file).with_suffix('.' + outputtype))
 
-    if outputtype == 'manycsv':
-        out_file = "converted_" + qfx_file.replace(".ofx", ".csv")
-        write_csv(statement, out_file)
-if outputtype == 'singlecsv':
-    out_file = "ofx-transactions.csv"
-    write_csv(allStatements, out_file)
-else:
-    with open('ofx-transactions.json', 'w') as outfile:
-        json.dump(jsonBody, outfile)
+    positions = get_positions_from_qfx(qfx)
+    save_files(positions, outputtype, Path(qfx_file).with_suffix('.positions.' + outputtype))
+
+main()
