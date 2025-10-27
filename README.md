@@ -1,3 +1,5 @@
+# NOT ACTIVELY MAINTAINED. If you see an error and want to do a PR, I'll gladly review it and merge it, but I am not putting in more effort on this. Sorry.
+
 # ofx2csv
 Python script that converts .ofx and .qfx files to .csv
 
